@@ -8,6 +8,7 @@ split, logs progress, and saves results in a structured output directory.
 Key Features
 ------------
 - Validates metric against sklearn available scorers
+- Configurable TPOT hyperparameters via CLI
 - Splits dataset into train/validation
 - Runs TPOT AutoML pipeline
 - Logs progress to file and console
@@ -17,54 +18,39 @@ Key Features
 
 Output Structure
 ----------------
-All outputs are saved inside `output_dir` (default: tpot_results):
-
 tpot_results/
 └── run_YYYYMMDD_HHMMSS/
-    ├── run.log                # Full execution log
-    ├── metrics.txt            # All computed validation metrics
-    ├── best_pipeline.pkl      # Saved model (or tpot_model.pkl)
+    ├── run.log
+    ├── metrics.txt
+    ├── best_pipeline.pkl  (or tpot.pkl)
 
 Arguments
 ---------
 --data_path : str
-    Path to input CSV file
-
 --target : str
-    Target column name
+--test_size : float
 
---test_size : float (default=0.2)
-    Fraction of data used for validation
+--metric : str
+    Must exist in sklearn.metrics.get_scorer_names()
 
---metric : str (default="accuracy")
-    Must be a valid sklearn scorer (checked before execution)
+--model_name : str
+    "tpot" or "best_pipeline"
 
---output_dir : str (default="tpot_results")
-    Base directory for outputs
-
---model_name : str (default="best_pipeline")
-    Which model to save:
-        - "tpot" → full TPOT object
-        - "best_pipeline" → fitted sklearn pipeline
+TPOT PARAMETERS:
+--generations : int
+--population_size : int
+--cv : int
+--random_state : int
 
 Examples
 --------
-Basic usage:
-    python script.py --data_path data.csv --target label
-
-Custom metric and split:
-    python script.py --data_path data.csv --target label \
-                     --metric f1 --test_size 0.3
-
-Save full TPOT object:
-    python script.py --data_path data.csv --target label \
-                     --model_name tpot
+python script.py --data_path data.csv --target y \
+    --generations 5 --population_size 10 --cv 5
 
 Notes
 -----
-- Metric must exist in sklearn.metrics.get_scorer_names()
-- Designed for classification tasks
-- Logging file allows independent monitoring of progress
+- Designed for classification
+- Logging enables monitoring long TPOT runs
 """
 
 import os
@@ -92,18 +78,7 @@ from tpot import TPOTClassifier
 
 
 def setup_logging(log_file):
-    """
-    Configure logging to file and console.
-
-    Parameters
-    ----------
-    log_file : str
-        Path to log file
-
-    Returns
-    -------
-    None
-    """
+    """Configure logging."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
@@ -115,46 +90,15 @@ def setup_logging(log_file):
 
 
 def validate_metric(metric_name):
-    """
-    Validate that the provided metric exists in sklearn.
-
-    Parameters
-    ----------
-    metric_name : str
-        Name of the metric to validate
-
-    Raises
-    ------
-    ValueError
-        If metric is not found in sklearn scorers
-    """
+    """Validate sklearn metric."""
     valid_metrics = get_scorer_names()
     if metric_name not in valid_metrics:
-        raise ValueError(
-            f"Metric '{metric_name}' not found.\n"
-            f"Available metrics: {list(valid_metrics)}"
-        )
+        raise ValueError(f"Invalid metric: {metric_name}")
 
 
 def compute_metrics(y_true, y_pred):
-    """
-    Compute a wide set of classification metrics.
-
-    Parameters
-    ----------
-    y_true : array-like
-        Ground truth labels
-
-    y_pred : array-like
-        Predicted labels
-
-    Returns
-    -------
-    dict
-        Dictionary containing computed metrics
-    """
+    """Compute multiple classification metrics."""
     results = {}
-
     try:
         results["accuracy"] = accuracy_score(y_true, y_pred)
         results["f1_weighted"] = f1_score(y_true, y_pred, average="weighted")
@@ -166,102 +110,66 @@ def compute_metrics(y_true, y_pred):
         results["classification_report"] = classification_report(y_true, y_pred)
     except Exception as e:
         logging.warning(f"Metric computation issue: {e}")
-
     return results
 
 
 def run_tpot_pipeline(
     df,
     target_column,
-    test_size=0.2,
-    metric="accuracy",
-    output_dir="tpot_results",
-    model_name="best_pipeline"
+    test_size,
+    metric,
+    output_dir,
+    model_name,
+    generations,
+    population_size,
+    cv,
+    random_state
 ):
     """
-    Execute TPOT pipeline training, evaluation, and saving.
-
-    Parameters
-    ----------
-    df : pandas.DataFrame
-        Input dataset
-
-    target_column : str
-        Column to be used as target
-
-    test_size : float, optional
-        Validation split ratio (default=0.2)
-
-    metric : str, optional
-        Scoring metric (must exist in sklearn)
-
-    output_dir : str, optional
-        Base output directory
-
-    model_name : str, optional
-        Model to save:
-            - "tpot"
-            - "best_pipeline"
-
-    Returns
-    -------
-    None
+    Run TPOT pipeline with configurable parameters.
     """
 
-    # Validate metric
     validate_metric(metric)
 
-    # Create run directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = os.path.join(output_dir, f"run_{timestamp}")
     os.makedirs(run_dir, exist_ok=True)
 
-    # Logging
-    log_file = os.path.join(run_dir, "run.log")
-    setup_logging(log_file)
+    setup_logging(os.path.join(run_dir, "run.log"))
 
-    logging.info("Starting TPOT pipeline")
+    logging.info("Starting TPOT run")
 
-    # Split data
     X = df.drop(columns=[target_column])
     y = df[target_column]
 
     X_train, X_val, y_train, y_val = train_test_split(
-        X, y, test_size=test_size, random_state=42
+        X, y, test_size=test_size, random_state=random_state
     )
 
-    logging.info("Data split completed")
+    logging.info("Data split done")
 
-    # Initialize TPOT
     tpot = TPOTClassifier(
-        random_state=42,
-        cv=2,
-        generations=2,
-        population_size=2,
+        generations=generations,
+        population_size=population_size,
+        cv=cv,
+        random_state=random_state,
         scoring=metric,
         verbosity=2
     )
 
-    logging.info("Training TPOT model...")
+    logging.info("Training TPOT...")
     tpot.fit(X_train, y_train)
 
-    logging.info("Training completed")
-
-    # Predict
     preds = tpot.predict(X_val)
 
-    # Metrics
     metrics = compute_metrics(y_val, preds)
 
-    # Save metrics
-    metrics_file = os.path.join(run_dir, "metrics.txt")
-    with open(metrics_file, "w") as f:
+    with open(os.path.join(run_dir, "metrics.txt"), "w") as f:
         for k, v in metrics.items():
             f.write(f"{k}: {v}\n")
 
     logging.info("Metrics saved")
 
-    # Select model
     if model_name == "tpot":
         model_to_save = tpot
     elif model_name == "best_pipeline":
@@ -269,34 +177,29 @@ def run_tpot_pipeline(
     else:
         raise ValueError("model_name must be 'tpot' or 'best_pipeline'")
 
-    # Save model
     model_path = os.path.join(run_dir, f"{model_name}.pkl")
     joblib.dump(model_to_save, model_path)
 
-    logging.info(f"Model saved to {model_path}")
-    logging.info("Run completed successfully")
+    logging.info(f"Model saved: {model_path}")
+    logging.info("Run finished")
 
 
 if __name__ == "__main__":
-    """
-    Command-line interface entry point.
-    Parses arguments and executes the pipeline.
-    """
-
     parser = argparse.ArgumentParser(description="Run TPOT pipeline")
 
-    parser.add_argument("--data_path", type=str, required=True,
-                        help="Path to CSV file")
-    parser.add_argument("--target", type=str, required=True,
-                        help="Target column name")
-    parser.add_argument("--test_size", type=float, default=0.2,
-                        help="Validation split size")
-    parser.add_argument("--metric", type=str, default="accuracy",
-                        help="Sklearn metric name")
-    parser.add_argument("--output_dir", type=str, default="tpot_results",
-                        help="Output directory")
-    parser.add_argument("--model_name", type=str, default="best_pipeline",
-                        help="'tpot' or 'best_pipeline'")
+    # Core args
+    parser.add_argument("--data_path", type=str, required=True)
+    parser.add_argument("--target", type=str, required=True)
+    parser.add_argument("--test_size", type=float, default=0.2)
+    parser.add_argument("--metric", type=str, default="accuracy")
+    parser.add_argument("--output_dir", type=str, default="tpot_results")
+    parser.add_argument("--model_name", type=str, default="best_pipeline")
+
+    # TPOT args
+    parser.add_argument("--generations", type=int, default=2)
+    parser.add_argument("--population_size", type=int, default=2)
+    parser.add_argument("--cv", type=int, default=2)
+    parser.add_argument("--random_state", type=int, default=42)
 
     args = parser.parse_args()
 
@@ -308,5 +211,9 @@ if __name__ == "__main__":
         test_size=args.test_size,
         metric=args.metric,
         output_dir=args.output_dir,
-        model_name=args.model_name
+        model_name=args.model_name,
+        generations=args.generations,
+        population_size=args.population_size,
+        cv=args.cv,
+        random_state=args.random_state
     )
