@@ -12,7 +12,7 @@ Original file is located at
 import os
 # ====== PUT YOUR KEYS HERE ======
 os.environ["OPENAI_API_KEY"] = "YOUR_OPENAI_KEY"
-os.environ["OPENROUTER_API_KEY"] = "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"
+os.environ["OPENROUTER_API_KEY"] = ""
 os.environ["GOOGLE_API_KEY"] = "YOUR_GEMINI_KEY"
 
 from langchain.chat_models import init_chat_model
